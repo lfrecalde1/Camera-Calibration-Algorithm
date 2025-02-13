@@ -1,0 +1,103 @@
+%% Code to Calculate the Transformation
+clc;clear;close all
+
+%% Load Points of the system
+load("Data.mat");
+
+%% Casadi 
+addpath('/home/fer/casadi-3.6.7-linux64-matlab2018b');
+import casadi.*;
+
+x = MX.sym('x', 3, 1);
+trans = MX.sym('trans', 3, 1);
+obj = 0;
+%% Number of points
+npts = size(dest_q,2);
+
+%% Data
+p = source_q;
+q = dest_q;
+
+%% Get mean
+p_m = (sum(p(1:4,:),2)/npts);
+q_m = (sum(q(1:4,:),2)/npts);
+
+
+%% New Data
+pi = p - p_m;
+qi = q - q_m;
+
+%% Initial value M
+M = zeros(4, 4);
+%% Get Sum
+for k = 1:length(dest_q)
+   Pi = [pi(1,k),-pi(2,k), -pi(3,k), -pi(4,k);...
+         pi(2,k), pi(1,k), pi(4,k),-pi(3,k);...
+         pi(3,k),-pi(4,k),pi(1,k), pi(2,k);...
+         pi(4,k),pi(3,k),-pi(2,k),pi(1,k)];
+     
+  Qi = [qi(1,k),-qi(2,k), -qi(3,k), -qi(4,k);...
+         qi(2,k), qi(1,k), -qi(4,k),qi(3,k);...
+         qi(3,k),qi(4,k),qi(1,k),-qi(2,k);...
+         qi(4,k),-qi(3,k),qi(2,k),qi(1,k)];
+     
+  M = M + Pi'*Qi; 
+
+  %Other Method
+  r2 = x'*x;
+  q0 = (1 - r2)/(1  + r2);
+  q1 = 2*x(1)/(1 + r2);
+  q2 = 2*x(2)/(1 + r2);
+  q3 = 2*x(3)/(1 + r2);
+
+  quaternion = [q0; q1; q2; q3];
+  quaternion_c = congujate_quaternion(quaternion);
+  
+  trans_aux = [0; trans(1); trans(2); trans(3)];
+  costo = quaternion_left(quaternion)*quaternion_right(quaternion_c)*p(:, k)  + trans_aux - q(:, k);
+  costo_n = norm(costo(2:4));
+  obj = obj + costo_n;
+  
+end
+
+%% Solve Optimization Problem
+% se crea el vector de desiscion solo de una columna
+OPT_variables = [x; trans];
+
+nlprob = struct('f', obj, 'x', OPT_variables);
+
+opts = struct;
+opts.ipopt.max_iter = 2000;
+opts.ipopt.print_level = 0;
+opts.print_time = 0;
+opts.ipopt.acceptable_tol =1e-6;
+opts.ipopt.acceptable_obj_change_tol = 1e-6;
+
+solver = nlpsol('solver', 'ipopt', nlprob, opts);
+
+args = struct;
+
+args.lbg(1) = 0;
+args.ubg(1) = 0;
+
+args.x0 = [1; 0; 0; 0; 0.1; 0.1; 0.1]; % initial value of the optimization variables
+
+sol = solver('x0', args.x0);
+
+solucion = full(sol.x)
+quat_opti = solucion(1:4);
+quat_opti_c = congujate_quaternion(quat_opti);
+trans = [0; solucion(5:7)];
+
+norm(quat_opti)
+points = quaternion_left(quat_opti)*quaternion_right(quat_opti_c)*source_q + trans;
+
+plot3(source_q(2,:),source_q(3,:),source_q(4,:),'r.'); hold on
+plot3(dest_q(2,:),dest_q(3,:),dest_q(4,:),'b.');
+plot3(points(2,:),points(3,:),points(4,:),'mo');
+plot3(0,0,0, 'rp')
+axis equal;
+grid on
+grid minor
+xlabel('$\textrm{X}[m]$','Interpreter','latex','FontSize',9); ylabel('$\textrm{Y}[m]$','Interpreter','latex','FontSize',9);zlabel('$\textrm{Z}[m]$','Interpreter','latex','FontSize',9);
+
