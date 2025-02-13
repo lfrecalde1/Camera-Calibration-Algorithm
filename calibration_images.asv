@@ -1,0 +1,33 @@
+%% Clear variables
+clc, clear all, close all;
+
+% List all files in the folder with .png extension
+imageFiles = dir(fullfile('/home/fer/Lectures/computer_vision/Autocalib', '*.jpg'));
+
+% Extract the file names into a cell array
+imageNames = {imageFiles.name};
+data_uv = ones(3, 54, length(imageNames));  % (2, #points, #samples
+data_xy = ones(3, 54, length(imageNames)); % (2, #points, #samples)
+% create the model values
+nx = 9; ny = 6; 
+dx = 0.0215; dy = 0.0215;
+[x_vals, y_vals] = meshgrid(0:dx:(nx-1)*dx, 0:dy:(ny-1)*dy);
+Z = zeros(size(x_vals));
+points3D = [x_vals(:), y_vals(:), Z(:)]';
+points3D = points3D(:, 1:end);
+points3D_H = [points3D; ones(1,size(points3D,2))];
+% Loop through each file name, read, and display the ima
+for k = 1:length(imageNames)
+    % Construct the full file path
+    fullFileName = fullfile('/home/fer/Lectures/computer_vision/Autocalib', imageNames{k});
+    
+    % Read the image
+    I = imread(fullFileName);
+    [imagePoints,boardSize] = detectCheckerboardPoints(I);
+    data_uv(1:2, :, k) = [imagePoints(:, 2);imagePoints(:, 1)];
+    data_xy(1:2, :, k) = points3D(1:2, :);
+    % Display the file name in the command window to confirm it's being processed
+    fprintf('Reading and displaying image: %s\n', fullFileName);
+end
+
+save('calibration_values.mat','data_uv','data_xy')

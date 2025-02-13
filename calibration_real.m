@@ -1,123 +1,19 @@
 %% Code to simulate a camera with internal and external parameters
 clc; clear; close all;
 
-% Create camera class (same as your original)
-% ---------------------------------------------------------------
-% Larger radial and tangential distortion
-k1 = -1.34;    % bigger negative => stronger barrel distortion
-k2 =  0.01; 
-k3 =  0;      
-p1 =  0.00;   % non-zero tangential distortion
-p2 = -0.00;   % negative sign for demonstration
+load("calibration_values.mat");
 
-cam = CentralCamera( ...
-    'focal', 0.015, ...             % 15 mm focal length
-    'pixel', 10e-6, ...             % 10 micrometers per pixel
-    'resolution', [1280 1024], ...  % image size: (nu=1280, nv=1024)
-    'centre', [640 512], ...        % principal point
-    'k', [k1 k2 k3], ...           % radial distortion
-    'p', [p1 p2],...
-    'distortion', [k1 k2 k3 p1 p2]);                % tangential distortion
+%% Section to compue the homography
+samples = size(data_xy, 3);
+X = data_xy;
+U = data_uv;
 
-K = cam.K;  % camera intrinsics
-
-% Define chessboard in the XY-plane (Z=0)
-% ---------------------------------------------------------------
-nx = 4; ny = 5; 
-dx = 0.1; dy = 0.1;
-[x_vals, y_vals] = meshgrid(0:dx:(nx-1)*dx, 0:dy:(ny-1)*dy);
-Z = zeros(size(x_vals));
-points3D = [x_vals(:), y_vals(:), Z(:)]';
-points3D = points3D(:, 1:end);
-points3D_H = [points3D; ones(1,size(points3D,2))];
-
-% Storage arrays
-samples = 10;
-data_uv = ones(3, size(points3D, 2), samples);  % (2, #points, #samples)
-data_xy = ones(3, size(points3D, 2), samples); % (2, #points, #samples)
-
-% Save rotations
-R_plane = zeros(3, 3, samples);
-t_plane = zeros(3, samples);
-
-%% Aux values for normalized
 F_identity = [1, 0, 0;...
               0, 1, 0;...
               0, 0, 1];
 Identity = [1, 0, 0, 0;...
             0, 1, 0, 0;...
             0, 0, 1, 0];
-% Create a figure for live plotting
-figure('Name','Image Plane Animation','NumberTitle','off');
-axis([0 cam.nu 0 cam.nv]);   % x from [0..1280], y from [0..1024]
-axis ij;                     % flip y-axis to match image coords
-hold on; grid on;
-xlabel('u (pixels)'); ylabel('v (pixels)');
-title('Projected Points in the Image Plane');
-
-for k = 1:samples
-    
-    % ------- 1) Generate random rotation angles (in degrees) -------
-    roll_deg  = -40 + 80*rand(1);  % from -5 to +5
-    pitch_deg = -40 + 80*rand(1);  % from -5 to +5
-    yaw_deg   = -20 + 40*rand(1);  % from -5 to +5
-    
-    % Convert chosen angles to radians (or fix some to zero as you did)
-    roll  = deg2rad(roll_deg);
-    pitch = deg2rad(pitch_deg);
-    yaw   = deg2rad(yaw_deg);
-    
-    % ------- 2) Build the rotation matrix -------
-    Rx = [1 0 0; 0 cos(roll) -sin(roll); 0 sin(roll) cos(roll)];
-    Ry = [cos(pitch) 0 sin(pitch); 0 1 0; -sin(pitch) 0 cos(pitch)];
-    Rz = [cos(yaw) -sin(yaw) 0; sin(yaw) cos(yaw) 0; 0 0 1];
-    R_plane(:, :, k) = Rz * Ry * Rx;
-    
-    % ------- 3) Random translation in Z between [1.5, 2.0] -------
-    translationZ = 1.5 + (2.0 - 1.5) * rand(1);
-    translationy = -0.4 + (0.1 - (-0.4)) * rand(1,1);
-    translationx = -0.4 + (0.1 - (-0.4)) * rand(1,1);
-    t_plane(:, k) = [translationx; translationy; translationZ];
-    
-    % ------- 4) Construct full 4x4 transform H_plane -------
-    H_plane = [R_plane(:, :, k), t_plane(:, k); 0 0 0 1];
-    
-    % ------- 5) Transform the chessboard points into world coords -------
-    points3D_I_h = H_plane * points3D_H;  
-    points3D_I   = points3D_I_h(1:3, :);
-    
-    % ------- 6) Project onto image plane using the camera intrinsics -------
-    %  or directly with 'cam.C'
-    values_normalized = F_identity*Identity*points3D_I_h;
-    values_normalized = values_normalized(1:2, :)./values_normalized(3, :);
-    radius = vecnorm(values_normalized);
-    D = 1 + k1*radius.^2 + k2*radius.^4;
-    x_warp = values_normalized.*D;
-    x_warp = [x_warp; ones(1, length(x_warp))];
-
-
-    pixels_aux = cam.K * x_warp;         % 3 x N in homogeneous
-    pixels_aux = pixels_aux(1:2,:) ./ pixels_aux(3,:);  % 2 x N
-    
-    % Store the 2D points if you need them later:
-    data_uv(1:2, :,k) = pixels_aux;
-    data_xy(1:2, :, k) = points3D(1:2, :);
-    
-    % ----------- Plot the new frame in the same figure -----------
-    cla; % clear previous points
-    plot(pixels_aux(1,:), pixels_aux(2,:), 'r.', 'MarkerSize',12);
-    
-    % Optional text
-    text(50, 50, sprintf('Iteration %d', k), 'Color','b','FontSize',12);
-    
-    drawnow;         % update the figure
-    pause(0.01);      % short pause to slow down animation
-end
-
-
-%% Section to compue the homography
-X = data_xy;
-U = data_uv;
 
 %% Set up optimization solver
 addpath('/home/fer/casadi-3.6.7-linux64-matlab2018b');
@@ -181,7 +77,6 @@ A_t = L(3, 3)*(inv(L))';
 %% The matrix of intrinsec parameters is defined below
 A = (A_t');
 A_inv = pinv(A);
-K = cam.K
 
 %% Empty values for the estimation
 R_estimation = zeros(3, 3, samples);
@@ -280,7 +175,7 @@ norm(error_estimation_distortion)
 norm(error_estimation_wo_distortion)
 
 
-x_init = [A(1,1), A(1, 2), A(2,2), A(1,3), A(2, 3), 0, 0];
+x_init = [A(1,1), A(1, 2), A(2,2), A(1,3), A(2, 3), distortion(1), distortion(2)];
 %% Section to find the best values based on the casadi optimization solver
 a_opt_vec = estimateIntrinsectCasADi(X, U, x_init, R_estimation, t_estimation)
 A_optimization = [a_opt_vec(1), a_opt_vec(2), a_opt_vec(4);...
@@ -316,7 +211,7 @@ norm(error_estimation_wo_distortion)
 %% Map rotations to quaternios
 quaternion_estimated = rotm2quat(R_estimation);
 X_init = [];
-X_init = [X_init;A(1,1); A(1, 2); A(2,2); A(1,3); A(2, 3); 0; 0];
+X_init = [X_init;A(1,1); A(1, 2); A(2,2); A(1,3); A(2, 3); ; distortion(1); distortion(2)];
 for k=1:size(X, 3)
     x_quaternion = quaternion_estimated(k, 2:4)/quaternion_estimated(k, 1);
     X_init = [X_init;x_quaternion';t_estimation(:, k)];
@@ -351,8 +246,81 @@ for k=1:size(X, 3)
 
     U_improved = A_final * x_warp;        
     U_improved = U_improved(1:2,:) ./ U_improved(3,:)  ;
-    error_estimation_distortion = [error_estimation_distortion; (U_real' - U_improved')];
+    error_estimation_distortion = [error_estimation_distortion; norm(U_real' - U_improved')];
 
 end
 
-norm(error_estimation_distortion)
+error_estimation_distortion
+
+figure('Name','Camera Frames in Inertial Frame', 'Position', [100, 100, 1200, 1200]);
+hold on; grid on; axis equal;
+xlabel('X'); ylabel('Y'); zlabel('Z');
+title('Camera Frames in the Inertial Coordinate System');
+
+% Optionally plot the inertial frame axes at the origin:
+plot3([0 0.05],[0 0],[0 0],'r','LineWidth',2); % X-axis (red)
+plot3([0 0],[0 0.05],[0 0],'g','LineWidth',2); % Y-axis (green)
+plot3([0 0],[0 0],[0 0.05],'b','LineWidth',2); % Z-axis (blue)
+text(0, 0, 0, 'Inertial', 'FontSize', 8, 'Color', 'k', 'HorizontalAlignment','left');
+% Set axis limits: x from -0.3 to 0.3, y from -0.3 to 0.3, and z from 0 to 0.8
+xlim([-0.3, 0.3]);
+ylim([-0.3, 0.3]);
+zlim([0, 0.8]);
+% Adjust the view
+view(13,20);
+% Decide how "long" you want each axis to appear:
+scale = 0.03;  % Tweak to suit
+
+% Number of frames:
+numFrames = size(R_final,3);
+
+% Create a colormap with a unique color for each frame.
+colors = lines(numFrames);  % Alternatively, try jet(numFrames) or hsv(numFrames)
+
+for k = 1:numFrames
+    % Translation of frame k (relative to inertial)
+    tx = trans(1,k);
+    ty = trans(2,k);
+    tz = trans(3,k);
+
+    % Rotation matrix for frame k
+    Rk = R_final(:,:,k);
+
+    % Extract (scaled) basis vectors for plotting the local axes
+    xAxis = Rk(:,1) * scale;
+    yAxis = Rk(:,2) * scale;
+    zAxis = Rk(:,3) * scale;
+
+    % Build transformation matrix from camera frame to inertial frame
+    T_matrix = [Rk, [tx; ty; tz]; 0 0 0 1];
+
+    % Transform points from the camera frame to the inertial frame.
+    % Here, X(1:2, :, k) are the 2D coordinates in the camera frame (assumed to lie on Z=0).
+    points2D = X(1:2, :, k);
+    numPoints = size(points2D, 2);
+    % Augment with zeros for Z (since points are on the image plane) and ones for homogeneous coordinates
+    points_homogeneous = [points2D; zeros(1, numPoints); ones(1, numPoints)];
+    points3D_I = T_matrix * points_homogeneous;  
+    
+    % Choose a unique color for this frame
+    currentColor = colors(k, :);
+    % Plot the transformed points in the inertial frame
+    plot3(points3D_I(1,:), points3D_I(2,:), points3D_I(3,:), 'o', ...
+          'MarkerSize', 2, 'MarkerFaceColor', currentColor);
+
+    % Plot each axis for the camera frame
+    % X-axis in red
+    plot3([tx, tx + xAxis(1)], [ty, ty + xAxis(2)], [tz, tz + xAxis(3)], 'r', 'LineWidth', 2);
+    % Y-axis in green
+    plot3([tx, tx + yAxis(1)], [ty, ty + yAxis(2)], [tz, tz + yAxis(3)], 'g', 'LineWidth', 2);
+    % Z-axis in blue
+    plot3([tx, tx + zAxis(1)], [ty, ty + zAxis(2)], [tz, tz + zAxis(3)], 'b', 'LineWidth', 2);
+
+    % Optionally label the frame
+    text(tx, ty, tz, sprintf('Frame %d', k), 'FontSize', 8, 'Color', 'k', 'HorizontalAlignment','left');
+    drawnow;         % update the figure
+    pause(0.5);      % short pause to slow down animation
+
+end
+
+
