@@ -1,4 +1,4 @@
-function R = quatTorot_c(quat)
+function R = quatTorot(quat)
     import casadi.*
     % Function to transform a quaternion to a rotation matrix.
     % The quaternion is normalized by dividing by (q' * q) -- be aware

@@ -4,7 +4,7 @@ clc; clear; close all;
 % Create camera class (same as your original)
 % ---------------------------------------------------------------
 % Larger radial and tangential distortion
-k1 = -0.2;    % bigger negative => stronger barrel distortion
+k1 = -1.34;    % bigger negative => stronger barrel distortion
 k2 =  0.01; 
 k3 =  0;      
 p1 =  0.00;   % non-zero tangential distortion
@@ -32,7 +32,7 @@ points3D = points3D(:, 2:end);
 points3D_H = [points3D; ones(1,size(points3D,2))];
 
 % Storage arrays
-samples = 40;
+samples = 10;
 data_uv = ones(3, size(points3D, 2), samples);  % (2, #points, #samples)
 data_xy = ones(3, size(points3D, 2), samples); % (2, #points, #samples)
 
@@ -312,3 +312,47 @@ for k=1:size(X,3)
 end
 norm(error_estimation_distortion)
 norm(error_estimation_wo_distortion)
+
+%% Map rotations to quaternios
+quaternion_estimated = rotm2quat(R_estimation);
+X_init = [];
+X_init = [X_init;A(1,1); A(1, 2); A(2,2); A(1,3); A(2, 3); 0; 0];
+for k=1:size(X, 3)
+    x_quaternion = quaternion_estimated(k, 2:4)/quaternion_estimated(k, 1);
+    X_init = [X_init;x_quaternion';t_estimation(:, k)];
+end
+
+X_opt_vec = cameraCalibrationCasADi(X, U, X_init);
+
+%% Get values from the optimizer
+A_final = [X_opt_vec(1), X_opt_vec(2), X_opt_vec(4);...
+    0, X_opt_vec(3), X_opt_vec(5);...
+    0, 0, 1]
+d_final = [X_opt_vec(6), X_opt_vec(7)]
+x_quaternions_trans = reshape(X_opt_vec(8:end), 6, samples);
+x = x_quaternions_trans(1:3, :);
+trans = x_quaternions_trans(4:6, :);
+error_estimation_distortion = [];
+R_final = zeros(3, 3, samples);
+for k=1:size(X, 3)
+    U_real = U(1:2, :, k);
+
+    quaternion = [(1 - x(1:3, k)'*x(1:3, k))/(1  + x(1:3, k)'*x(1:3, k)); 2*x(1, k)/(1 + x(1:3, k)'*x(1:3, k)); 2*x(2, k)/(1 + x(1:3, k)'*x(1:3, k)); 2*x(3, k)/(1 + x(1:3, k)'*x(1:3, k))];
+    trans_aux = [trans(1, k); trans(2, k); trans(3, k)];
+    T_estimated = [quatTorot(quaternion), trans_aux; 0 0 0 1];
+    R_final(:, :, k) = quatTorot(quaternion);
+
+    values_normalized = F_identity*Identity*T_estimated*[X(1:2,:, k); zeros(1, size(X, 2)); ones(1, size(X, 2))];
+    values_normalized = values_normalized(1:2, :)./values_normalized(3, :);
+    radius = vecnorm(values_normalized);
+    D = 1 + d_final(1)*radius.^2 + d_final(2)*radius.^4;
+    x_warp = values_normalized.*D;
+    x_warp = [x_warp; ones(1, length(x_warp))];
+
+    U_improved = A_final * x_warp;        
+    U_improved = U_improved(1:2,:) ./ U_improved(3,:)  ;
+    error_estimation_distortion = [error_estimation_distortion; (U_real' - U_improved')];
+
+end
+
+norm(error_estimation_distortion)
